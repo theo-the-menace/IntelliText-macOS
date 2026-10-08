@@ -3,7 +3,7 @@ import InputMethodKit
 import IntelliTextCore
 
 final class InputController: IMKInputController {
-    private let engine = CorrectionEngine()
+    private let engine = CorrectionEngine(provider: HybridInferenceProvider())
     private weak var lastClient: AnyObject?
     private var lastTransaction: ReplacementTransaction?
 
@@ -27,10 +27,15 @@ final class InputController: IMKInputController {
         guard !sentence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         lastClient = client as AnyObject
+        let style = WritingStyle(rawValue: UserDefaults.standard.string(forKey: "IntelliText.WritingStyle") ?? "professional") ?? .professional
         Task { [engine] in
-            guard let result = try? await engine.suggest(for: context) else { return }
+            guard let result = try? await engine.suggest(for: context, style: style) else { return }
             let (_, transaction) = result
             await MainActor.run {
+                guard client.length() != NSNotFound,
+                      transaction.range.location + transaction.range.length <= client.length(),
+                      let current = client.attributedSubstring(from: transaction.range),
+                      current.string == transaction.original else { return }
                 client.insertText(transaction.replacement, replacementRange: transaction.range)
                 self.lastTransaction = transaction
             }
@@ -51,6 +56,17 @@ final class InputController: IMKInputController {
         undo.keyEquivalentModifierMask = [.command, .option, .shift]
         undo.target = self
         menu.addItem(undo)
+        menu.addItem(.separator())
+        let styleItem = NSMenuItem(title: "Writing Style", action: nil, keyEquivalent: "")
+        let styleMenu = NSMenu(title: "Writing Style")
+        for style in WritingStyle.allCases {
+            let option = NSMenuItem(title: style.displayName, action: #selector(selectWritingStyle(_:)), keyEquivalent: "")
+            option.representedObject = style.rawValue
+            option.target = self
+            styleMenu.addItem(option)
+        }
+        styleItem.submenu = styleMenu
+        menu.addItem(styleItem)
         return menu
     }
 
@@ -63,16 +79,41 @@ final class InputController: IMKInputController {
     @objc private func undoLastCorrection(_ sender: Any?) {
         guard let client = lastClient as? IMKTextInput, let transaction = lastTransaction else { return }
         let replacementRange = NSRange(location: transaction.range.location, length: transaction.replacement.utf16.count)
+        guard replacementRange.location + replacementRange.length <= client.length(),
+              let current = client.attributedSubstring(from: replacementRange),
+              current.string == transaction.replacement else { return }
         client.insertText(transaction.original, replacementRange: replacementRange)
         lastTransaction = nil
+    }
+
+    @objc private func selectWritingStyle(_ sender: NSMenuItem) {
+        guard let style = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(style, forKey: "IntelliText.WritingStyle")
+    }
+}
+
+private extension WritingStyle {
+    var displayName: String {
+        switch self {
+        case .casual: return "Daily Conversation"
+        case .businessEmail: return "Business Email"
+        case .professional: return "Professional"
+        case .academic: return "Academic"
+        }
     }
 }
 
 final class ServerDelegate: NSObject, NSApplicationDelegate {
     private var server: IMKServer!
+    private let modelServer = LocalModelServer()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        modelServer.startIfNeeded()
         server = IMKServer(name: "IntelliText_Connection", bundleIdentifier: Bundle.main.bundleIdentifier ?? "com.theo.IntelliTextMacOS.InputMethod")
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        modelServer.stop()
     }
 }
 

@@ -199,6 +199,28 @@ swift test
 
 然后在「系统设置 → 键盘 → 文本输入 → 编辑」中加入 IntelliText。安装脚本只写入当前用户的 `~/Library/Input Methods/IntelliText.app`；删除该目录即可卸载。当前 bundle 使用 ad-hoc signing，正式分发前需要 Developer ID 签名和 notarization。
 
+## 本地 LLM（M4 Pro / 24 GB）
+
+初版主模型为 **Qwen3-8B Q4_K_M**（GGUF，约 5.03 GB），运行时使用 `llama.cpp` Metal backend，context 限制为 4096 tokens，并只监听 `127.0.0.1:11439`。输入法启动时会尝试自动启动 `llama-server`；必须先安装 `llama.cpp` 并把模型放到：
+
+```text
+~/Library/Application Support/IntelliText/Models/Qwen3-8B-Q4_K_M.gguf
+```
+
+安装依赖：
+
+```bash
+brew install llama.cpp
+```
+
+模型权重不进入 Git。初版使用 Qwen3-8B 普通指令模型的 Q4_K_M 量化，提示中禁用 thinking 模式，并要求返回受校验的 JSON；未启动本地服务时不发送到任何云端，文本保持原样。写作场景可在 IntelliText 输入法菜单的 **Writing Style** 下选择 Daily Conversation、Business Email、Professional 或 Academic。
+
+可选的本地模型集成测试（需先安装模型并确保输入法已启动本地 server）：
+
+```bash
+INTELLITEXT_LLM_INTEGRATION=1 swift test --filter LocalLLMIntegrationTests
+```
+
 ## License
 
 License will be selected before the first distributable release.
