@@ -6,14 +6,68 @@ final class InputController: IMKInputController {
     private let engine = CorrectionEngine(provider: HybridInferenceProvider())
     private weak var lastClient: AnyObject?
     private var lastTransaction: ReplacementTransaction?
+    private var autoCheckWorkItem: DispatchWorkItem?
+    private var lastAutoCheckedSentence: String?
 
     override func inputText(_ string: String!, client sender: Any!) -> Bool {
         guard let string else { return false }
-        (sender as? IMKTextInput)?.insertText(string, replacementRange: NSRange(location: NSNotFound, length: 0))
+        guard let client = sender as? IMKTextInput else { return false }
+        client.insertText(string, replacementRange: NSRange(location: NSNotFound, length: 0))
+        scheduleAutomaticCheck(for: client)
         return true
     }
 
-    func correctCurrentSentence(client: IMKTextInput) {
+    /// Make IntelliText a usable English input source: pass ordinary key presses
+    /// into the focused application while leaving app/system shortcuts untouched.
+    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
+        guard let event, event.type == .keyDown,
+              let client = sender as? IMKTextInput else { return false }
+        let flags = event.modifierFlags
+        if flags.contains(.command) || flags.contains(.control) {
+            return false
+        }
+
+        // Backspace and forward-delete do not have useful `characters` values.
+        if event.keyCode == 51 {
+            let selection = client.selectedRange()
+            let location = selection.location == NSNotFound ? 0 : selection.location
+            let range = selection.length > 0
+                ? selection
+                : NSRange(location: max(0, location - 1), length: location > 0 ? 1 : 0)
+            if range.length > 0 { client.insertText("", replacementRange: range) }
+            scheduleAutomaticCheck(for: client)
+            return true
+        }
+        if event.keyCode == 117 {
+            let selection = client.selectedRange()
+            if selection.location != NSNotFound {
+                let range = selection.length > 0 ? selection : NSRange(location: selection.location, length: 1)
+                client.insertText("", replacementRange: range)
+            }
+            scheduleAutomaticCheck(for: client)
+            return true
+        }
+
+        guard let characters = event.characters, !characters.isEmpty else { return false }
+        client.insertText(characters, replacementRange: NSRange(location: NSNotFound, length: 0))
+        scheduleAutomaticCheck(for: client)
+        return true
+    }
+
+    /// Debounced automatic correction. The input method receives committed text here,
+    /// so the model only runs after the user pauses, rather than once per keystroke.
+    private func scheduleAutomaticCheck(for client: IMKTextInput) {
+        autoCheckWorkItem?.cancel()
+        var workItem: DispatchWorkItem!
+        workItem = DispatchWorkItem { [weak self, weak client] in
+            guard let self, let client, !workItem.isCancelled else { return }
+            self.correctCurrentSentence(client: client, automatic: true)
+        }
+        autoCheckWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: workItem)
+    }
+
+    func correctCurrentSentence(client: IMKTextInput, automatic: Bool = false) {
         let selection = client.selectedRange()
         let documentLength = client.length()
         guard selection.location != NSNotFound,
@@ -25,6 +79,9 @@ final class InputController: IMKInputController {
         let context = TextContext(text: attributed.string, selectedRange: selection)
         let sentence = context.currentSentence
         guard !sentence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard sentence.split(whereSeparator: { $0.isWhitespace }).count >= 2 else { return }
+        if automatic, sentence == lastAutoCheckedSentence { return }
+        if automatic { lastAutoCheckedSentence = sentence }
 
         lastClient = client as AnyObject
         let style = WritingStyle(rawValue: UserDefaults.standard.string(forKey: "IntelliText.WritingStyle") ?? "professional") ?? .professional

@@ -13,20 +13,24 @@ brew install llama.cpp
 
 ## 测试纠错
 
-1. 打开 TextEdit，新建文稿并输入：
+1. 打开 TextEdit，新建文稿。
+2. 从菜单栏输入法菜单切换到 **IntelliText**。
+3. 直接输入：
 
    ```text
    She go to the office yesterday.
    ```
 
-2. 点击菜单栏输入法图标，选择 **IntelliText → Polish Current Sentence**。
-3. 等待约 1–3 秒，预期句子变为：
+4. 停止输入约 1–2 秒，预期句子自动变为：
 
    ```text
    She went to the office yesterday.
    ```
 
-4. 选择 **Undo IntelliText Correction**，确认原句恢复。
+5. 如需撤销，打开输入法菜单，选择 **Undo IntelliText Correction**。
+
+当前自动检查是防抖触发：暂停输入约 1.2 秒后才调用本地模型，不会每个字符都调用模型。
+也可以从输入法菜单手动选择 **Polish Current Sentence** 立即重试。
 
 ## 不会某个英文词时
 
