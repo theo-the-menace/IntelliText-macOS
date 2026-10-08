@@ -59,11 +59,11 @@ final class TeacherHintPanel {
 
     func show(original: String, replacement: String, note: String) {
         dismissWorkItem?.cancel()
-        titleLabel.stringValue = "已帮你改正：\(replacement)"
+        titleLabel.stringValue = "Corrected: \(replacement)"
         let explanation = note.trimmingCharacters(in: .whitespacesAndNewlines)
         detailLabel.stringValue = explanation.isEmpty
-            ? "原句：\(original)"
-            : "\(explanation)  ·  原句：\(original)"
+            ? "Original: \(original)"
+            : "Why: \(explanation)  ·  Original: \(original)"
 
         if let screen = NSScreen.main {
             let frame = panel.frame
