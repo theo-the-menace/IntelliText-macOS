@@ -10,12 +10,44 @@ public struct TextContext: Equatable, Sendable {
     }
 
     public var currentSentence: String {
+        let range = currentSentenceRange
+        return (text as NSString).substring(with: range)
+    }
+
+    /// Document-relative UTF-16 range, suitable for IMKTextInput replacementRange.
+    public var currentSentenceRange: NSRange {
         let nsText = text as NSString
         let cursor = max(0, min(selectedRange.location, nsText.length))
-        let prefix = nsText.substring(to: cursor)
-        let start = prefix.lastIndex(where: { ".!?\n".contains($0) }).map { prefix.index(after: $0) } ?? prefix.startIndex
-        let suffix = nsText.substring(from: cursor)
-        let endOffset = suffix.firstIndex(where: { ".!?\n".contains($0) }).map { suffix.distance(from: suffix.startIndex, to: $0) + 1 } ?? suffix.count
-        return String(prefix[start...]) + String(suffix.prefix(endOffset))
+        let delimiters = CharacterSet(charactersIn: ".!?\n")
+
+        var start = cursor
+        while start > 0 {
+            let character = nsText.character(at: start - 1)
+            if character <= UInt16.max, delimiters.contains(UnicodeScalar(character)!) { break }
+            start -= 1
+        }
+
+        var end = cursor
+        while end < nsText.length {
+            let character = nsText.character(at: end)
+            if character <= UInt16.max, delimiters.contains(UnicodeScalar(character)!) {
+                end += 1
+                break
+            }
+            end += 1
+        }
+        return NSRange(location: start, length: end - start)
+    }
+}
+
+public struct ReplacementTransaction: Equatable, Sendable {
+    public let range: NSRange
+    public let original: String
+    public let replacement: String
+
+    public init(range: NSRange, original: String, replacement: String) {
+        self.range = range
+        self.original = original
+        self.replacement = replacement
     }
 }

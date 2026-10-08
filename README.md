@@ -159,8 +159,8 @@ IntelliText macOS/
 
 ## 下一步
 
-1. 建立最小 Xcode 工程并确认 InputMethodKit 在目标 macOS 版本上的签名与安装流程。
-2. 先用 mock 推理器完成当前句替换、撤销和快捷键闭环。
+1. 将 Swift Package 的输入法 executable 打包成带 `Info.plist` 的 `.app` / input source，并在系统输入法设置中安装验证。
+2. 加入候选预览与撤销栈；当前句菜单动作已能触发 mock 纠错并按 document-relative range 替换。
 3. 加入量化本地模型，建立 100 条英文纠错回放集和内存/延迟基线。
 4. 根据真实使用数据调整停顿阈值、置信度阈值和候选文案。
 
