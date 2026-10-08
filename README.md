@@ -136,6 +136,25 @@ Gemma 3 4B IT 是第二候选：官方资料显示它面向受限资源设备并
 - 所有修改都可预览、应用、撤销；模型异常时原文保持不变。
 - 全程离线运行，断网不影响核心功能。
 
+## 当前初版验收路径
+
+已实现并验证：
+
+- 规则路径自动修正常见英文拼写、重复空格和句首大小写；
+- `business_email` 场景会展开 `can't` / `don't` 等缩写；
+- 从光标所在位置计算当前句，只对该句做 document-relative 替换；
+- 输入法菜单提供 `Polish Current Sentence`，快捷键为 `⌥⌘` 加菜单指定按键；
+- 最近一次 IntelliText 修改可用 `⌥⇧⌘Z` 撤销；
+- 4 个 Swift 单元测试通过，input method bundle 构建、签名和当前用户安装均通过。
+
+验收步骤：
+
+1. 运行 `./Scripts/install-input-method.sh`，在系统设置中加入 IntelliText。
+2. 打开 TextEdit，输入 `this is inputing  text.`，从输入法菜单选择 **Polish Current Sentence**。
+3. 预期结果是 `This is inputting text.`；选择 **Undo IntelliText Correction** 应恢复原句。
+
+当前明确未包含：真实本地 LLM、流式候选窗口、停顿触发和 Assist 续写。它们会在这个可回归的输入法闭环之上继续接入，不会改变当前句范围和撤销协议。
+
 ## 目录规划（初版）
 
 ```text
