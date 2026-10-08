@@ -2,6 +2,85 @@ import AppKit
 import InputMethodKit
 import IntelliTextCore
 
+final class TeacherHintPanel {
+    static let shared = TeacherHintPanel()
+
+    private let panel: NSPanel
+    private let titleLabel: NSTextField
+    private let detailLabel: NSTextField
+    private var dismissWorkItem: DispatchWorkItem?
+
+    private init() {
+        titleLabel = NSTextField(labelWithString: "")
+        detailLabel = NSTextField(labelWithString: "")
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.textColor = .labelColor
+        detailLabel.font = .systemFont(ofSize: 12)
+        detailLabel.textColor = .secondaryLabelColor
+        detailLabel.maximumNumberOfLines = 2
+        detailLabel.lineBreakMode = .byWordWrapping
+
+        let stack = NSStackView(views: [titleLabel, detailLabel])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 72),
+            styleMask: [.titled, .utilityWindow, .nonactivatingPanel, .borderless],
+            backing: .buffered,
+            defer: true
+        )
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+
+        let background = NSVisualEffectView()
+        background.material = .hudWindow
+        background.blendingMode = .withinWindow
+        background.state = .active
+        background.wantsLayer = true
+        background.layer?.cornerRadius = 12
+        background.translatesAutoresizingMaskIntoConstraints = false
+        panel.contentView = background
+        background.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: background.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -12)
+        ])
+    }
+
+    func show(original: String, replacement: String, note: String) {
+        dismissWorkItem?.cancel()
+        titleLabel.stringValue = "已帮你改正：\(replacement)"
+        let explanation = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        detailLabel.stringValue = explanation.isEmpty
+            ? "原句：\(original)"
+            : "\(explanation)  ·  原句：\(original)"
+
+        if let screen = NSScreen.main {
+            let frame = panel.frame
+            let x = screen.visibleFrame.midX - frame.width / 2
+            let y = screen.visibleFrame.maxY - frame.height - 54
+            panel.setFrameOrigin(NSPoint(x: x, y: y))
+        }
+        panel.orderFrontRegardless()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.panel.orderOut(nil)
+        }
+        dismissWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.5, execute: workItem)
+    }
+}
+
 final class InputController: IMKInputController {
     private let engine = CorrectionEngine(provider: HybridInferenceProvider())
     private weak var lastClient: AnyObject?
@@ -95,6 +174,13 @@ final class InputController: IMKInputController {
                       current.string == transaction.original else { return }
                 client.insertText(transaction.replacement, replacementRange: transaction.range)
                 self.lastTransaction = transaction
+                if automatic {
+                    TeacherHintPanel.shared.show(
+                        original: transaction.original,
+                        replacement: transaction.replacement,
+                        note: result.0.shortNote
+                    )
+                }
             }
         }
     }

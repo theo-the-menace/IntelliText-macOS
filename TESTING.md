@@ -27,6 +27,8 @@ brew install llama.cpp
    She went to the office yesterday.
    ```
 
+   同时会在屏幕上方出现一个短暂的老师提示框，显示修改结果和简短原因；提示框约 4.5 秒后自动消失，不会抢走输入焦点。
+
 5. 如需撤销，打开输入法菜单，选择 **Undo IntelliText Correction**。
 
 当前自动检查是防抖触发：暂停输入约 1.2 秒后才调用本地模型，不会每个字符都调用模型。
