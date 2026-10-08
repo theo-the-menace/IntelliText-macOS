@@ -16,7 +16,13 @@ final class TextContextTests: XCTestCase {
     func testMockProviderOnlyChangesKnownTypo() async throws {
         let provider = MockInferenceProvider()
         let response = try await provider.correct(CorrectionRequest(sentence: "while inputing"))
-        XCTAssertEqual(response.replacement, "while inputting")
+        XCTAssertEqual(response.replacement, "While inputting")
         XCTAssertGreaterThan(response.confidence, 0.9)
+    }
+
+    func testBusinessStyleExpandsContractionAndKeepsRange() async throws {
+        let result = try await CorrectionEngine().suggest(for: TextContext(text: "don't recieve this", selectedRange: NSRange(location: 5, length: 0)), style: .businessEmail)
+        XCTAssertEqual(result?.1.range, NSRange(location: 0, length: 18))
+        XCTAssertEqual(result?.0.replacement, "do not receive this")
     }
 }

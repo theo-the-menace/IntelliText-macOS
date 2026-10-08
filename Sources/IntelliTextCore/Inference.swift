@@ -37,16 +37,31 @@ public protocol InferenceProvider: Sendable {
     func correct(_ request: CorrectionRequest) async throws -> CorrectionResponse
 }
 
+public struct RuleInferenceProvider: InferenceProvider {
+    public init() {}
+
+    public func correct(_ request: CorrectionRequest) async throws -> CorrectionResponse {
+        var result = request.sentence
+        var notes: [String] = []
+        for (wrong, right) in [("inputing", "inputting"), ("teh", "the"), ("recieve", "receive"), ("grammer", "grammar"), ("alot", "a lot")] where result.range(of: wrong, options: .caseInsensitive) != nil {
+            result = result.replacingOccurrences(of: wrong, with: right, options: .caseInsensitive)
+            notes.append("spelling")
+        }
+        let collapsed = result.replacingOccurrences(of: " {2,}", with: " ", options: .regularExpression)
+        if collapsed != result { result = collapsed; notes.append("spacing") }
+        if let first = result.first, first.isLowercase { result = first.uppercased() + result.dropFirst(); notes.append("capitalization") }
+        if request.style == .businessEmail {
+            result = result.replacingOccurrences(of: "can't", with: "cannot", options: .caseInsensitive)
+            result = result.replacingOccurrences(of: "don't", with: "do not", options: .caseInsensitive)
+        }
+        return CorrectionResponse(original: request.sentence, replacement: result, confidence: result == request.sentence ? 0.0 : 0.995, shortNote: notes.isEmpty ? "No rule-based change" : notes.joined(separator: ", "))
+    }
+}
+
 public struct MockInferenceProvider: InferenceProvider {
     public init() {}
 
     public func correct(_ request: CorrectionRequest) async throws -> CorrectionResponse {
-        let replacement = request.sentence.replacingOccurrences(of: "inputing", with: "inputting")
-        return CorrectionResponse(
-            original: request.sentence,
-            replacement: replacement,
-            confidence: replacement == request.sentence ? 0.0 : 0.99,
-            shortNote: replacement == request.sentence ? "No high-confidence change" : "Corrected spelling"
-        )
+        return try await RuleInferenceProvider().correct(request)
     }
 }
