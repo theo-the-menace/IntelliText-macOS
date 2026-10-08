@@ -5,8 +5,14 @@ final class LocalModelServer {
 
     func startIfNeeded() {
         guard !isHealthy(), process?.isRunning != true else { return }
-        let model = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/IntelliText/Models/Qwen3-8B-Q4_K_M.gguf")
+        let sourceURL = URL(fileURLWithPath: #filePath)
+        let projectRoot = sourceURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let configuredPath = ProcessInfo.processInfo.environment["INTELLITEXT_MODEL_PATH"]
+        let model = configuredPath.map(URL.init(fileURLWithPath:))
+            ?? projectRoot.appendingPathComponent("Models/Qwen3-8B-Q4_K_M.gguf")
         guard FileManager.default.fileExists(atPath: model.path),
               let executable = ["/opt/homebrew/bin/llama-server", "/usr/local/bin/llama-server"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return }
 
