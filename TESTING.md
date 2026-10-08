@@ -6,8 +6,7 @@
 
 ```bash
 brew install llama.cpp
-./Scripts/build-input-method.sh
-./Scripts/install-input-method.sh
+./Scripts/build-and-install-input-method.sh
 ```
 
 然后打开「系统设置 → 键盘 → 文本输入 → 编辑」，添加 **IntelliText**。如果之前已添加过，先移除再重新添加。
@@ -28,6 +27,10 @@ brew install llama.cpp
    ```
 
 4. 选择 **Undo IntelliText Correction**，确认原句恢复。
+
+## 不会某个英文词时
+
+当前版本的自动纠错不会擅自翻译中文词。目标交互是按 Assist 后显示最多 3 个英文候选，用户选择后才插入；候选窗口尚在开发中。
 
 ## 测试场景风格
 

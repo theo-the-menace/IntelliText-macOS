@@ -149,11 +149,11 @@ Gemma 3 4B IT 是第二候选：官方资料显示它面向受限资源设备并
 
 验收步骤：
 
-1. 运行 `./Scripts/install-input-method.sh`，在系统设置中加入 IntelliText。
+1. 运行 `./Scripts/build-and-install-input-method.sh`，在系统设置中加入 IntelliText。
 2. 打开 TextEdit，输入 `this is inputing  text.`，从输入法菜单选择 **Polish Current Sentence**。
 3. 预期结果是 `This is inputting text.`；选择 **Undo IntelliText Correction** 应恢复原句。
 
-当前明确未包含：真实本地 LLM、流式候选窗口、停顿触发和 Assist 续写。它们会在这个可回归的输入法闭环之上继续接入，不会改变当前句范围和撤销协议。
+当前初版已包含真实本地 LLM；流式候选窗口、停顿触发和 Assist 续写仍在后续迭代。
 
 ## 目录规划（初版）
 
@@ -178,8 +178,8 @@ IntelliText macOS/
 
 ## 下一步
 
-1. 加入候选预览与撤销栈；当前句菜单动作已能触发 mock 纠错并按 document-relative range 替换。
-2. 加入量化本地模型，建立 100 条英文纠错回放集和内存/延迟基线。
+1. 完成 Assist 候选窗口，用于不会表达的中文词或短语。
+2. 建立 100 条英文纠错回放集和内存/延迟基线。
 3. 根据真实使用数据调整停顿阈值、置信度阈值和候选文案。
 
 ## 构建与安装 InputMethodKit
@@ -188,16 +188,10 @@ IntelliText macOS/
 
 ```bash
 swift test
-./Scripts/build-input-method.sh
+./Scripts/build-and-install-input-method.sh
 ```
 
-构建产物位于 `.build/input-method/IntelliText.app`。本地安装：
-
-```bash
-./Scripts/install-input-method.sh
-```
-
-然后在「系统设置 → 键盘 → 文本输入 → 编辑」中加入 IntelliText。安装脚本只写入当前用户的 `~/Library/Input Methods/IntelliText.app`；删除该目录即可卸载。当前 bundle 使用 ad-hoc signing，正式分发前需要 Developer ID 签名和 notarization。
+脚本会构建并安装 `.build/input-method/IntelliText.app` 到当前用户的 `~/Library/Input Methods/IntelliText.app`。然后在「系统设置 → 键盘 → 文本输入 → 编辑」中加入 IntelliText；删除该目录即可卸载。当前 bundle 使用 ad-hoc signing，正式分发前需要 Developer ID 签名和 notarization。
 
 ## 本地 LLM（M4 Pro / 24 GB）
 
@@ -214,6 +208,23 @@ brew install llama.cpp
 ```
 
 模型权重不进入 Git（`.gitignore` 已排除 `Models/*.gguf`）。初版使用 Qwen3-8B 普通指令模型的 Q4_K_M 量化，提示中禁用 thinking 模式，并要求返回受校验的 JSON；未启动本地服务时不发送到任何云端，文本保持原样。写作场景可在 IntelliText 输入法菜单的 **Writing Style** 下选择 Daily Conversation、Business Email、Professional 或 Academic。
+
+## 不会说某个词时的方案
+
+例如你输入：
+
+```text
+Is it possible to write a 输入法 app on Mac?
+```
+
+不要让 Auto Correct 猜测并直接改写。正确的交互是：
+
+1. 用户按 **Assist** 快捷键（规划为 `⌥⌘Space`），或从菜单选择 **Find English Phrase**。
+2. 输入法只读取当前句，识别 `输入法` 这个非英文 token，并保留原文位置。
+3. 本地模型返回最多 3 个候选，例如 `input method`、`keyboard input method`、`text input app`，同时给出一条完整句修正版。
+4. 候选窗口显示“原词 → 英文候选”和简短解释；用户按数字键/方向键选择后才替换，按 `Esc` 保持原文。
+
+这样“不会表达”与“语法错误”是两个动作：自动纠错不会擅自翻译，Assist 也不会生成整段内容。当前仓库已经有本地 LLM provider 和场景 preset；候选窗口与 Assist 提交动作是下一项开发内容。
 
 可选的本地模型集成测试（需先安装模型并确保输入法已启动本地 server）：
 
