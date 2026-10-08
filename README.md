@@ -159,10 +159,26 @@ IntelliText macOS/
 
 ## 下一步
 
-1. 将 Swift Package 的输入法 executable 打包成带 `Info.plist` 的 `.app` / input source，并在系统输入法设置中安装验证。
-2. 加入候选预览与撤销栈；当前句菜单动作已能触发 mock 纠错并按 document-relative range 替换。
-3. 加入量化本地模型，建立 100 条英文纠错回放集和内存/延迟基线。
-4. 根据真实使用数据调整停顿阈值、置信度阈值和候选文案。
+1. 加入候选预览与撤销栈；当前句菜单动作已能触发 mock 纠错并按 document-relative range 替换。
+2. 加入量化本地模型，建立 100 条英文纠错回放集和内存/延迟基线。
+3. 根据真实使用数据调整停顿阈值、置信度阈值和候选文案。
+
+## 构建与安装 InputMethodKit
+
+先运行测试，再构建 input source bundle：
+
+```bash
+swift test
+./Scripts/build-input-method.sh
+```
+
+构建产物位于 `.build/input-method/IntelliText.app`。本地安装：
+
+```bash
+./Scripts/install-input-method.sh
+```
+
+然后在「系统设置 → 键盘 → 文本输入 → 编辑」中加入 IntelliText。安装脚本只写入当前用户的 `~/Library/Input Methods/IntelliText.app`；删除该目录即可卸载。当前 bundle 使用 ad-hoc signing，正式分发前需要 Developer ID 签名和 notarization。
 
 ## License
 
