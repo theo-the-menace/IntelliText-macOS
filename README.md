@@ -60,6 +60,23 @@ is it possible to write a 输入法 app on mac that can automatically correct my
 
 ## 技术方案
 
+### 模型选择（MVP）
+
+默认模型选用 **Qwen3-4B-Instruct-2507，Q4 量化**，通过 `llama.cpp` 或 MLX 运行。Qwen 官方模型卡将它定位为 4B 参数的指令模型，支持较长上下文，并强调多语言理解与偏好对齐；对本项目的英文纠错、商务邮件润色和中英混输候选比较合适。[模型卡](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507)
+
+16 GB Mac 不应在输入法进程内加载大模型。量化后的 4B 模型作为独立推理服务按需加载，目标常驻内存约 2.5-4 GB；空闲自动卸载。若设备温度、延迟或内存压力不理想，fallback 为 Qwen3-1.7B/1.5B 级别模型，牺牲一部分措辞质量换取更低资源占用。
+
+Gemma 3 4B IT 是第二候选：官方资料显示它面向受限资源设备并支持多语言，但 Gemma 许可和分发条款需要在打包前单独审查。[Gemma 模型卡](https://huggingface.co/google/gemma-3-4b-pt)
+
+模型不会单独“保证”地道和优雅。质量控制由四层共同完成：
+
+1. 场景 preset：`casual`、`business_email`、`professional`、`academic`；用户可手动切换。
+2. 明确要求“保持原意、只返回 JSON、禁止添加事实”，并校验 `replacement` 和 `confidence`。
+3. 高置信度才显示 Auto Correct；低置信度只给候选，不自动替换。
+4. 用真实英文回放集评估语法、语气、过度改写率、延迟和内存，而不是只看模型排行榜。
+
+开发顺序是 **InputMethodKit 闭环优先，模型第二**：先用 mock 推理器完成输入、当前句边界、候选、应用和撤销；之后替换 `InferenceProvider` 实现接入 Q4 模型。这样模型质量问题不会掩盖输入法层的光标和文本替换问题。
+
 ### 输入法层
 
 - Swift + SwiftUI 设置界面。
