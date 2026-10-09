@@ -92,6 +92,7 @@ final class InputController: IMKInputController {
     override func inputText(_ string: String!, client sender: Any!) -> Bool {
         guard let string else { return false }
         guard let client = sender as? IMKTextInput else { return false }
+        NSLog("IntelliText: inputText received committed text (length=%d)", string.utf16.count)
         client.insertText(string, replacementRange: NSRange(location: NSNotFound, length: 0))
         scheduleAutomaticCheck(for: client)
         return true
@@ -100,6 +101,7 @@ final class InputController: IMKInputController {
     /// Receive unpacked key events from InputMethodKit and commit them directly.
     func inputText(_ string: String!, key keyCode: Int, modifiers flags: UInt, client sender: Any!) -> Bool {
         guard let string, let client = sender as? IMKTextInput else { return false }
+        NSLog("IntelliText: unpacked key event (keyCode=%d, length=%d)", keyCode, string.utf16.count)
         let modifiers = NSEvent.ModifierFlags(rawValue: flags)
         if modifiers.contains(.command) || modifiers.contains(.control) {
             return false
@@ -135,12 +137,21 @@ final class InputController: IMKInputController {
     /// Receive raw key events when the Text Services Manager does not unpack them.
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
         guard let event, event.type == .keyDown else { return false }
+        NSLog("IntelliText: raw key event (keyCode=%d)", Int(event.keyCode))
         return inputText(
             event.characters,
             key: Int(event.keyCode),
             modifiers: event.modifierFlags.rawValue,
             client: sender
         )
+    }
+
+    override func recognizedEvents(_ sender: Any!) -> Int {
+        Int(NSEvent.EventTypeMask.keyDown.rawValue)
+    }
+
+    override func activateServer(_ sender: Any!) {
+        NSLog("IntelliText: input controller activated")
     }
 
     /// Debounced automatic correction. The input method receives committed text here,
@@ -161,21 +172,33 @@ final class InputController: IMKInputController {
         let documentLength = client.length()
         guard selection.location != NSNotFound,
               documentLength != NSNotFound,
-              selection.location <= documentLength else { return }
+              selection.location <= documentLength else {
+            NSLog("IntelliText: cannot inspect current text (selection=%@ length=%d)", NSStringFromRange(selection), documentLength)
+            return
+        }
 
         let documentRange = NSRange(location: 0, length: documentLength)
-        guard let attributed = client.attributedSubstring(from: documentRange) else { return }
+        guard let attributed = client.attributedSubstring(from: documentRange) else {
+            NSLog("IntelliText: client does not expose the full text range")
+            return
+        }
         let context = TextContext(text: attributed.string, selectedRange: selection)
         let sentence = context.currentSentence
         guard !sentence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        guard sentence.split(whereSeparator: { $0.isWhitespace }).count >= 2 else { return }
+        guard sentence.split(whereSeparator: { $0.isWhitespace }).count >= 2 else {
+            NSLog("IntelliText: waiting for a complete phrase")
+            return
+        }
         if automatic, sentence == lastAutoCheckedSentence { return }
         if automatic { lastAutoCheckedSentence = sentence }
 
         lastClient = client as AnyObject
         let style = WritingStyle(rawValue: UserDefaults.standard.string(forKey: "IntelliText.WritingStyle") ?? "professional") ?? .professional
         Task { [engine] in
-            guard let result = try? await engine.suggest(for: context, style: style) else { return }
+            guard let result = try? await engine.suggest(for: context, style: style) else {
+                NSLog("IntelliText: correction model returned no change or failed")
+                return
+            }
             let (_, transaction) = result
             await MainActor.run {
                 guard client.length() != NSNotFound,
@@ -183,6 +206,7 @@ final class InputController: IMKInputController {
                       let current = client.attributedSubstring(from: transaction.range),
                       current.string == transaction.original else { return }
                 client.insertText(transaction.replacement, replacementRange: transaction.range)
+                NSLog("IntelliText: applied automatic correction")
                 self.lastTransaction = transaction
                 if automatic {
                     TeacherHintPanel.shared.show(
@@ -262,8 +286,10 @@ final class ServerDelegate: NSObject, NSApplicationDelegate {
     private let modelServer = LocalModelServer()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSLog("IntelliText: server delegate launched")
         modelServer.startIfNeeded()
         server = IMKServer(name: "IntelliText_Connection", bundleIdentifier: Bundle.main.bundleIdentifier ?? "com.theo.inputmethod.IntelliText")
+        NSLog("IntelliText: IMK server initialized")
     }
 
     func applicationWillTerminate(_ notification: Notification) {
