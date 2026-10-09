@@ -96,18 +96,16 @@ final class InputController: IMKInputController {
         return true
     }
 
-    /// Make IntelliText a usable English input source: pass ordinary key presses
-    /// into the focused application while leaving app/system shortcuts untouched.
-    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-        guard let event, event.type == .keyDown,
-              let client = sender as? IMKTextInput else { return false }
-        let flags = event.modifierFlags
-        if flags.contains(.command) || flags.contains(.control) {
+    /// Receive unpacked key events from InputMethodKit and commit them directly.
+    func inputText(_ string: String!, key keyCode: Int, modifiers flags: UInt, client sender: Any!) -> Bool {
+        guard let string, let client = sender as? IMKTextInput else { return false }
+        let modifiers = NSEvent.ModifierFlags(rawValue: flags)
+        if modifiers.contains(.command) || modifiers.contains(.control) {
             return false
         }
 
         // Backspace and forward-delete do not have useful `characters` values.
-        if event.keyCode == 51 {
+        if keyCode == 51 {
             let selection = client.selectedRange()
             let location = selection.location == NSNotFound ? 0 : selection.location
             let range = selection.length > 0
@@ -117,7 +115,7 @@ final class InputController: IMKInputController {
             scheduleAutomaticCheck(for: client)
             return true
         }
-        if event.keyCode == 117 {
+        if keyCode == 117 {
             let selection = client.selectedRange()
             if selection.location != NSNotFound {
                 let range = selection.length > 0 ? selection : NSRange(location: selection.location, length: 1)
@@ -127,10 +125,21 @@ final class InputController: IMKInputController {
             return true
         }
 
-        guard let characters = event.characters, !characters.isEmpty else { return false }
-        client.insertText(characters, replacementRange: NSRange(location: NSNotFound, length: 0))
+        guard !string.isEmpty else { return false }
+        client.insertText(string, replacementRange: NSRange(location: NSNotFound, length: 0))
         scheduleAutomaticCheck(for: client)
         return true
+    }
+
+    /// Receive raw key events when the Text Services Manager does not unpack them.
+    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
+        guard let event, event.type == .keyDown else { return false }
+        return inputText(
+            event.characters,
+            key: Int(event.keyCode),
+            modifiers: event.modifierFlags.rawValue,
+            client: sender
+        )
     }
 
     /// Debounced automatic correction. The input method receives committed text here,
