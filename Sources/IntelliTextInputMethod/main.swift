@@ -81,6 +81,7 @@ final class TeacherHintPanel {
     }
 }
 
+@objc(InputController)
 final class InputController: IMKInputController {
     private let engine = CorrectionEngine(provider: HybridInferenceProvider())
     private weak var lastClient: AnyObject?
@@ -255,6 +256,7 @@ private extension WritingStyle {
     }
 }
 
+@objc(ServerDelegate)
 final class ServerDelegate: NSObject, NSApplicationDelegate {
     private var server: IMKServer!
     private let modelServer = LocalModelServer()
