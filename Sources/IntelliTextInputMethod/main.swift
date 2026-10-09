@@ -483,12 +483,15 @@ final class ServerDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         globalAccessibilityTimer?.invalidate()
+        pendingAccessibilityCheck?.cancel()
         modelServer.stop()
     }
 
     private var lastElement: AXUIElement?
     private var lastValue = ""
     private var lastSentence = ""
+    private var pendingAccessibilityCheck: DispatchWorkItem?
+    private var accessibilityRevision = 0
     private let engine = CorrectionEngine(provider: HybridInferenceProvider())
 
     private func pollFocusedEditor() {
@@ -497,12 +500,22 @@ final class ServerDelegate: NSObject, NSApplicationDelegate {
         guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let focused else { return }
         let element = focused as! AXUIElement
+        var roleRaw: CFTypeRef?
+        var valueSettable = DarwinBoolean(false)
+        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRaw) == .success,
+              let role = roleRaw as? String,
+              [kAXTextFieldRole as String, kAXTextAreaRole as String, kAXComboBoxRole as String].contains(role),
+              AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &valueSettable) == .success,
+              valueSettable.boolValue else { return }
         var raw: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &raw) == .success,
               let value = raw as? String, !value.isEmpty else { return }
         if let lastElement, lastElement === element, value == lastValue { return }
         lastElement = element
         lastValue = value
+        accessibilityRevision += 1
+        let revision = accessibilityRevision
+        pendingAccessibilityCheck?.cancel()
         var cursor = value.utf16.count
         var rangeRaw: CFTypeRef?
         if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeRaw) == .success,
@@ -513,14 +526,25 @@ final class ServerDelegate: NSObject, NSApplicationDelegate {
         let context = TextContext(text: value, selectedRange: NSRange(location: cursor, length: 0))
         let sentence = context.currentSentence
         guard sentence.split(whereSeparator: { $0.isWhitespace }).count >= 2, sentence != lastSentence else { return }
-        lastSentence = sentence
+        var work: DispatchWorkItem!
+        work = DispatchWorkItem { [weak self] in
+            guard let self, !work.isCancelled, self.accessibilityRevision == revision else { return }
+            self.lastSentence = sentence
+            self.checkAccessibilitySentence(context: context, element: element, expectedValue: value, revision: revision)
+        }
+        pendingAccessibilityCheck = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.25, execute: work)
+    }
+
+    private func checkAccessibilitySentence(context: TextContext, element: AXUIElement, expectedValue: String, revision: Int) {
         let style = WritingStyle(rawValue: UserDefaults.standard.string(forKey: "IntelliText.WritingStyle") ?? "professional") ?? .professional
         Task { [engine] in
             guard let result = try? await engine.suggest(for: context, style: style) else { return }
             await MainActor.run {
+                guard self.accessibilityRevision == revision else { return }
                 var current: CFTypeRef?
                 guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &current) == .success,
-                      let current = current as? String, current == value,
+                      let current = current as? String, current == expectedValue,
                       let stringRange = Range(result.1.range, in: current) else { return }
                 let replacement = current.replacingCharacters(in: stringRange, with: result.1.replacement)
                 guard AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, replacement as CFTypeRef) == .success else { return }
