@@ -116,6 +116,10 @@ final class InputController: IMKInputController {
     private var lastAutoCheckedSentence: String?
     private var fallbackText = ""
     private var fallbackClientID: ObjectIdentifier?
+    private var accessibilityPollTimer: Timer?
+    private weak var accessibilityElement: AXUIElement?
+    private var accessibilityText = ""
+    private var accessibilityLastCheckedSentence: String?
 
     override func inputText(_ string: String!, client sender: Any!) -> Bool {
         guard let string else { return false }
@@ -186,6 +190,96 @@ final class InputController: IMKInputController {
 
     override func activateServer(_ sender: Any!) {
         NSLog("IntelliText: input controller activated")
+        startAccessibilityFallback()
+    }
+
+    override func deactivateServer(_ sender: Any!) {
+        stopAccessibilityFallback()
+    }
+
+    private func startAccessibilityFallback() {
+        stopAccessibilityFallback()
+        accessibilityPollTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            self?.pollAccessibilityText()
+        }
+        RunLoop.main.add(accessibilityPollTimer!, forMode: .common)
+    }
+
+    private func stopAccessibilityFallback() {
+        accessibilityPollTimer?.invalidate()
+        accessibilityPollTimer = nil
+        accessibilityElement = nil
+        accessibilityText = ""
+        accessibilityLastCheckedSentence = nil
+    }
+
+    /// Some Electron/webview editors do not create an IMKTextInput session. In that case,
+    /// read only the focused editable control through Accessibility and write back only
+    /// when the exact sentence we inspected is still present.
+    private func pollAccessibilityText() {
+        let system = AXUIElementCreateSystemWide()
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused else { return }
+        let focusedElement = focused as! AXUIElement
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(focusedElement, kAXValueAttribute as CFString, &value) == .success,
+              let value = value as? String,
+              !value.isEmpty else { return }
+
+        if accessibilityElement.map({ $0 !== focusedElement }) ?? true {
+            accessibilityElement = focusedElement
+            accessibilityText = value
+            accessibilityLastCheckedSentence = nil
+            NSLog("IntelliText: Accessibility fallback attached to focused text control")
+        } else if value != accessibilityText {
+            accessibilityText = value
+        } else {
+            return
+        }
+
+        let cursor = accessibilityCursor(in: focusedElement, textLength: value.utf16.count)
+        let context = TextContext(text: value, selectedRange: NSRange(location: cursor, length: 0))
+        let sentence = context.currentSentence
+        guard sentence.split(whereSeparator: { $0.isWhitespace }).count >= 2,
+              sentence != accessibilityLastCheckedSentence else { return }
+        accessibilityLastCheckedSentence = sentence
+        let style = WritingStyle(rawValue: UserDefaults.standard.string(forKey: "IntelliText.WritingStyle") ?? "professional") ?? .professional
+        let engine = self.engine
+        Task {
+            guard let result = try? await engine.suggest(for: context, style: style) else { return }
+            let (_, transaction) = result
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.applyAccessibility(transaction, to: focusedElement, expectedText: value, note: result.0.shortNote)
+            }
+        }
+    }
+
+    private func accessibilityCursor(in element: AXUIElement, textLength: Int) -> Int {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &value) == .success,
+              let value else { return textLength }
+        let rangeValue = value as! AXValue
+        var range = CFRange(location: textLength, length: 0)
+        guard AXValueGetValue(rangeValue, .cfRange, &range) else { return textLength }
+        return min(max(0, range.location), textLength)
+    }
+
+    private func applyAccessibility(_ transaction: ReplacementTransaction, to element: AXUIElement, expectedText: String, note: String) {
+        var current: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &current) == .success,
+              let current = current as? String,
+              current == expectedText,
+              let range = Range(transaction.range, in: current) else { return }
+        let replacement = current.replacingCharacters(in: range, with: transaction.replacement)
+        guard AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, replacement as CFTypeRef) == .success else {
+            NSLog("IntelliText: Accessibility fallback could not write correction")
+            return
+        }
+        accessibilityText = replacement
+        NSLog("IntelliText: applied correction through Accessibility fallback")
+        TeacherHintPanel.shared.show(original: transaction.original, replacement: transaction.replacement, note: note, anchor: focusedTextFrame())
     }
 
     /// Debounced automatic correction. The input method receives committed text here,
@@ -223,24 +317,22 @@ final class InputController: IMKInputController {
     func correctCurrentSentence(client: IMKTextInput, automatic: Bool = false) {
         let selection = client.selectedRange()
         let documentLength = client.length()
-        guard selection.location != NSNotFound,
-              documentLength != NSNotFound,
-              selection.location <= documentLength else {
-            NSLog("IntelliText: cannot inspect current text (selection=%@ length=%d)", NSStringFromRange(selection), documentLength)
-            return
-        }
-
-        let documentRange = NSRange(location: 0, length: documentLength)
         let text: String
         let contextSelection: NSRange
-        if let attributed = client.attributedSubstring(from: documentRange) {
+        let hasUsableDocumentRange = selection.location != NSNotFound
+            && documentLength != NSNotFound
+            && selection.location <= documentLength
+        let documentRange = hasUsableDocumentRange
+            ? NSRange(location: 0, length: documentLength)
+            : NSRange(location: NSNotFound, length: 0)
+        if hasUsableDocumentRange, let attributed = client.attributedSubstring(from: documentRange) {
             text = attributed.string
             contextSelection = selection
         } else {
             resetFallbackIfNeeded(for: client)
             text = fallbackText
             contextSelection = NSRange(location: text.utf16.count, length: 0)
-            NSLog("IntelliText: using local input buffer fallback (length=%d)", text.utf16.count)
+            NSLog("IntelliText: text client unavailable; using local input buffer (selection=%@ length=%d bufferLength=%d)", NSStringFromRange(selection), documentLength, text.utf16.count)
         }
         guard !text.isEmpty else { return }
         let context = TextContext(text: text, selectedRange: contextSelection)
@@ -262,13 +354,15 @@ final class InputController: IMKInputController {
             }
             let (_, transaction) = result
             await MainActor.run {
-                if let current = client.attributedSubstring(from: transaction.range), current.string == transaction.original {
+                if transaction.range.location != NSNotFound,
+                   let current = client.attributedSubstring(from: transaction.range),
+                   current.string == transaction.original {
                     client.insertText(transaction.replacement, replacementRange: transaction.range)
-                } else if self.fallbackText == transaction.original {
-                    let replacementRange = NSRange(location: 0, length: transaction.original.utf16.count)
-                    client.insertText(transaction.replacement, replacementRange: replacementRange)
-                    self.fallbackText = transaction.replacement
+                } else if self.fallbackSubstring(at: transaction.range) == transaction.original {
+                    client.insertText(transaction.replacement, replacementRange: transaction.range)
+                    self.replaceFallback(at: transaction.range, with: transaction.replacement)
                 } else {
+                    NSLog("IntelliText: correction not applied; input buffer no longer matches target")
                     return
                 }
                 NSLog("IntelliText: applied automatic correction")
@@ -283,6 +377,22 @@ final class InputController: IMKInputController {
                 }
             }
         }
+    }
+
+    private func fallbackSubstring(at range: NSRange) -> String? {
+        let value = fallbackText as NSString
+        guard range.location != NSNotFound,
+              range.location >= 0,
+              NSMaxRange(range) <= value.length else { return nil }
+        return value.substring(with: range)
+    }
+
+    private func replaceFallback(at range: NSRange, with replacement: String) {
+        let value = fallbackText as NSString
+        guard range.location != NSNotFound,
+              range.location >= 0,
+              NSMaxRange(range) <= value.length else { return }
+        fallbackText = value.replacingCharacters(in: range, with: replacement)
     }
 
     private func focusedTextFrame() -> NSRect? {
