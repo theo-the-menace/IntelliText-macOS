@@ -465,6 +465,7 @@ private extension WritingStyle {
 final class ServerDelegate: NSObject, NSApplicationDelegate {
     private var server: IMKServer!
     private let modelServer = LocalModelServer()
+    private var globalAccessibilityTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSLog("IntelliText: server delegate launched")
@@ -472,10 +473,74 @@ final class ServerDelegate: NSObject, NSApplicationDelegate {
         modelServer.startIfNeeded()
         server = IMKServer(name: "IntelliText_Connection", bundleIdentifier: Bundle.main.bundleIdentifier ?? "com.theo.inputmethod.IntelliText")
         NSLog("IntelliText: IMK server initialized")
+        if AXIsProcessTrusted() {
+            globalAccessibilityTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in
+                self?.pollFocusedEditor()
+            }
+            RunLoop.main.add(globalAccessibilityTimer!, forMode: .common)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        globalAccessibilityTimer?.invalidate()
         modelServer.stop()
+    }
+
+    private var lastElement: AXUIElement?
+    private var lastValue = ""
+    private var lastSentence = ""
+    private let engine = CorrectionEngine(provider: HybridInferenceProvider())
+
+    private func pollFocusedEditor() {
+        let system = AXUIElementCreateSystemWide()
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused else { return }
+        let element = focused as! AXUIElement
+        var raw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &raw) == .success,
+              let value = raw as? String, !value.isEmpty else { return }
+        if let lastElement, lastElement === element, value == lastValue { return }
+        lastElement = element
+        lastValue = value
+        var cursor = value.utf16.count
+        var rangeRaw: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeRaw) == .success,
+           let rangeRaw {
+            var range = CFRange(location: cursor, length: 0)
+            if AXValueGetValue(rangeRaw as! AXValue, .cfRange, &range) { cursor = range.location }
+        }
+        let context = TextContext(text: value, selectedRange: NSRange(location: cursor, length: 0))
+        let sentence = context.currentSentence
+        guard sentence.split(whereSeparator: { $0.isWhitespace }).count >= 2, sentence != lastSentence else { return }
+        lastSentence = sentence
+        let style = WritingStyle(rawValue: UserDefaults.standard.string(forKey: "IntelliText.WritingStyle") ?? "professional") ?? .professional
+        Task { [engine] in
+            guard let result = try? await engine.suggest(for: context, style: style) else { return }
+            await MainActor.run {
+                var current: CFTypeRef?
+                guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &current) == .success,
+                      let current = current as? String, current == value,
+                      let stringRange = Range(result.1.range, in: current) else { return }
+                let replacement = current.replacingCharacters(in: stringRange, with: result.1.replacement)
+                guard AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, replacement as CFTypeRef) == .success else { return }
+                self.lastValue = replacement
+                TeacherHintPanel.shared.show(original: result.1.original, replacement: result.1.replacement, note: result.0.shortNote, anchor: self.focusedFrame())
+            }
+        }
+    }
+
+    private func focusedFrame() -> NSRect? {
+        guard let element = lastElement else { return nil }
+        var positionRaw: CFTypeRef?
+        var sizeRaw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionRaw) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRaw) == .success else { return nil }
+        var point = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(positionRaw as! AXValue, .cgPoint, &point), AXValueGetValue(sizeRaw as! AXValue, .cgSize, &size) else { return nil }
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(point) })
+        return NSRect(x: point.x, y: (screen?.frame.maxY ?? 0) - point.y - size.height, width: size.width, height: size.height)
     }
 }
 
