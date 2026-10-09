@@ -1,6 +1,7 @@
 import AppKit
 import InputMethodKit
 import IntelliTextCore
+import ApplicationServices
 
 final class TeacherHintPanel {
     static let shared = TeacherHintPanel()
@@ -57,7 +58,7 @@ final class TeacherHintPanel {
         ])
     }
 
-    func show(original: String, replacement: String, note: String) {
+    func show(original: String, replacement: String, note: String, anchor: NSRect? = nil) {
         dismissWorkItem?.cancel()
         titleLabel.stringValue = "Corrected: \(replacement)"
         let explanation = note.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -65,7 +66,16 @@ final class TeacherHintPanel {
             ? "Original: \(original)"
             : "Why: \(explanation)  ·  Original: \(original)"
 
-        if let screen = NSScreen.main {
+        if let anchor {
+            let screen = NSScreen.screens.first(where: { $0.frame.intersects(anchor) }) ?? NSScreen.main
+            let frame = panel.frame
+            let below = anchor.minY - frame.height - 10
+            let above = anchor.maxY + 10
+            let y = below >= (screen?.visibleFrame.minY ?? 0) ? below : above
+            let x = min(max(anchor.minX, screen?.visibleFrame.minX ?? anchor.minX),
+                        (screen?.visibleFrame.maxX ?? anchor.maxX) - frame.width)
+            panel.setFrameOrigin(NSPoint(x: x, y: y))
+        } else if let screen = NSScreen.main {
             let frame = panel.frame
             let x = screen.visibleFrame.midX - frame.width / 2
             let y = screen.visibleFrame.maxY - frame.height - 54
@@ -88,12 +98,15 @@ final class InputController: IMKInputController {
     private var lastTransaction: ReplacementTransaction?
     private var autoCheckWorkItem: DispatchWorkItem?
     private var lastAutoCheckedSentence: String?
+    private var fallbackText = ""
+    private var fallbackClientID: ObjectIdentifier?
 
     override func inputText(_ string: String!, client sender: Any!) -> Bool {
         guard let string else { return false }
         guard let client = sender as? IMKTextInput else { return false }
         NSLog("IntelliText: inputText received committed text (length=%d)", string.utf16.count)
         client.insertText(string, replacementRange: NSRange(location: NSNotFound, length: 0))
+        updateFallback(with: string, client: client)
         scheduleAutomaticCheck(for: client)
         return true
     }
@@ -114,7 +127,10 @@ final class InputController: IMKInputController {
             let range = selection.length > 0
                 ? selection
                 : NSRange(location: max(0, location - 1), length: location > 0 ? 1 : 0)
-            if range.length > 0 { client.insertText("", replacementRange: range) }
+            if range.length > 0 {
+                client.insertText("", replacementRange: range)
+                removeFallbackCharacters(count: range.length, client: client)
+            }
             scheduleAutomaticCheck(for: client)
             return true
         }
@@ -123,6 +139,7 @@ final class InputController: IMKInputController {
             if selection.location != NSNotFound {
                 let range = selection.length > 0 ? selection : NSRange(location: selection.location, length: 1)
                 client.insertText("", replacementRange: range)
+                removeFallbackCharacters(count: range.length, client: client)
             }
             scheduleAutomaticCheck(for: client)
             return true
@@ -130,6 +147,7 @@ final class InputController: IMKInputController {
 
         guard !string.isEmpty else { return false }
         client.insertText(string, replacementRange: NSRange(location: NSNotFound, length: 0))
+        updateFallback(with: string, client: client)
         scheduleAutomaticCheck(for: client)
         return true
     }
@@ -167,6 +185,25 @@ final class InputController: IMKInputController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: workItem)
     }
 
+    private func updateFallback(with string: String, client: IMKTextInput) {
+        resetFallbackIfNeeded(for: client)
+        fallbackText.append(string)
+    }
+
+    private func removeFallbackCharacters(count: Int, client: IMKTextInput) {
+        resetFallbackIfNeeded(for: client)
+        fallbackText = String(fallbackText.dropLast(min(count, fallbackText.count)))
+    }
+
+    private func resetFallbackIfNeeded(for client: IMKTextInput) {
+        let id = ObjectIdentifier(client as AnyObject)
+        if fallbackClientID != id {
+            fallbackClientID = id
+            fallbackText = ""
+            lastAutoCheckedSentence = nil
+        }
+    }
+
     func correctCurrentSentence(client: IMKTextInput, automatic: Bool = false) {
         let selection = client.selectedRange()
         let documentLength = client.length()
@@ -178,11 +215,19 @@ final class InputController: IMKInputController {
         }
 
         let documentRange = NSRange(location: 0, length: documentLength)
-        guard let attributed = client.attributedSubstring(from: documentRange) else {
-            NSLog("IntelliText: client does not expose the full text range")
-            return
+        let text: String
+        let contextSelection: NSRange
+        if let attributed = client.attributedSubstring(from: documentRange) {
+            text = attributed.string
+            contextSelection = selection
+        } else {
+            resetFallbackIfNeeded(for: client)
+            text = fallbackText
+            contextSelection = NSRange(location: text.utf16.count, length: 0)
+            NSLog("IntelliText: using local input buffer fallback (length=%d)", text.utf16.count)
         }
-        let context = TextContext(text: attributed.string, selectedRange: selection)
+        guard !text.isEmpty else { return }
+        let context = TextContext(text: text, selectedRange: contextSelection)
         let sentence = context.currentSentence
         guard !sentence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         guard sentence.split(whereSeparator: { $0.isWhitespace }).count >= 2 else {
@@ -201,22 +246,46 @@ final class InputController: IMKInputController {
             }
             let (_, transaction) = result
             await MainActor.run {
-                guard client.length() != NSNotFound,
-                      transaction.range.location + transaction.range.length <= client.length(),
-                      let current = client.attributedSubstring(from: transaction.range),
-                      current.string == transaction.original else { return }
-                client.insertText(transaction.replacement, replacementRange: transaction.range)
+                if let current = client.attributedSubstring(from: transaction.range), current.string == transaction.original {
+                    client.insertText(transaction.replacement, replacementRange: transaction.range)
+                } else if self.fallbackText == transaction.original {
+                    let replacementRange = NSRange(location: 0, length: transaction.original.utf16.count)
+                    client.insertText(transaction.replacement, replacementRange: replacementRange)
+                    self.fallbackText = transaction.replacement
+                } else {
+                    return
+                }
                 NSLog("IntelliText: applied automatic correction")
                 self.lastTransaction = transaction
                 if automatic {
                     TeacherHintPanel.shared.show(
                         original: transaction.original,
                         replacement: transaction.replacement,
-                        note: result.0.shortNote
+                        note: result.0.shortNote,
+                        anchor: self.focusedTextFrame()
                     )
                 }
             }
         }
+    }
+
+    private func focusedTextFrame() -> NSRect? {
+        let system = AXUIElementCreateSystemWide()
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused else { return nil }
+        let element = focused as! AXUIElement
+        var positionValue: CFTypeRef?
+        var sizeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success,
+              let positionValue, let sizeValue else { return nil }
+        var point = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &point),
+              AXValueGetValue(sizeValue as! AXValue, .cgSize, &size) else { return nil }
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(point) })
+        return NSRect(x: point.x, y: (screen?.frame.maxY ?? 0) - point.y - size.height, width: size.width, height: size.height)
     }
 
     override func menu() -> NSMenu! {
