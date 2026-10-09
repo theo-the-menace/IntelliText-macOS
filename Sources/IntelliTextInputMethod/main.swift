@@ -142,27 +142,13 @@ final class InputController: IMKInputController {
 
         // Backspace and forward-delete do not have useful `characters` values.
         if keyCode == 51 {
-            let selection = client.selectedRange()
-            let location = selection.location == NSNotFound ? 0 : selection.location
-            let range = selection.length > 0
-                ? selection
-                : NSRange(location: max(0, location - 1), length: location > 0 ? 1 : 0)
-            if range.length > 0 {
-                client.insertText("", replacementRange: range)
-                removeFallbackCharacters(count: range.length, client: client)
-            }
-            scheduleAutomaticCheck(for: client)
-            return true
+            // Let the host perform native backward deletion. Synthesizing an empty
+            // replacement breaks marked text, selections, and some web controls.
+            return false
         }
         if keyCode == 117 {
-            let selection = client.selectedRange()
-            if selection.location != NSNotFound {
-                let range = selection.length > 0 ? selection : NSRange(location: selection.location, length: 1)
-                client.insertText("", replacementRange: range)
-                removeFallbackCharacters(count: range.length, client: client)
-            }
-            scheduleAutomaticCheck(for: client)
-            return true
+            // Let the host perform native forward deletion.
+            return false
         }
 
         guard let string, !string.isEmpty else { return false }
@@ -482,6 +468,7 @@ final class ServerDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSLog("IntelliText: server delegate launched")
+        NSLog("IntelliText: Accessibility trusted=%d", AXIsProcessTrusted() ? 1 : 0)
         modelServer.startIfNeeded()
         server = IMKServer(name: "IntelliText_Connection", bundleIdentifier: Bundle.main.bundleIdentifier ?? "com.theo.inputmethod.IntelliText")
         NSLog("IntelliText: IMK server initialized")
