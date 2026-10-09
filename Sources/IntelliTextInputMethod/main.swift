@@ -14,21 +14,23 @@ final class TeacherHintPanel {
     private init() {
         titleLabel = NSTextField(labelWithString: "")
         detailLabel = NSTextField(labelWithString: "")
-        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         titleLabel.textColor = .labelColor
-        detailLabel.font = .systemFont(ofSize: 12)
+        titleLabel.maximumNumberOfLines = 0
+        titleLabel.lineBreakMode = .byWordWrapping
+        detailLabel.font = .systemFont(ofSize: 11)
         detailLabel.textColor = .secondaryLabelColor
-        detailLabel.maximumNumberOfLines = 2
+        detailLabel.maximumNumberOfLines = 0
         detailLabel.lineBreakMode = .byWordWrapping
 
         let stack = NSStackView(views: [titleLabel, detailLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 4
+        stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 360, height: 72),
+            contentRect: NSRect(x: 0, y: 0, width: 260, height: 44),
             styleMask: [.titled, .utilityWindow, .nonactivatingPanel, .borderless],
             backing: .buffered,
             defer: true
@@ -46,15 +48,15 @@ final class TeacherHintPanel {
         background.blendingMode = .withinWindow
         background.state = .active
         background.wantsLayer = true
-        background.layer?.cornerRadius = 12
+        background.layer?.cornerRadius = 8
         background.translatesAutoresizingMaskIntoConstraints = false
         panel.contentView = background
         background.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -16),
-            stack.topAnchor.constraint(equalTo: background.topAnchor, constant: 12),
-            stack.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -12)
+            stack.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 7),
+            stack.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -7),
+            stack.topAnchor.constraint(equalTo: background.topAnchor, constant: 5),
+            stack.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -5)
         ])
     }
 
@@ -65,6 +67,20 @@ final class TeacherHintPanel {
         detailLabel.stringValue = explanation.isEmpty
             ? "Original: \(original)"
             : "Why: \(explanation)  ·  Original: \(original)"
+        let contentWidth: CGFloat = 246
+        titleLabel.preferredMaxLayoutWidth = contentWidth
+        detailLabel.preferredMaxLayoutWidth = contentWidth
+        let titleHeight = (titleLabel.stringValue as NSString).boundingRect(
+            with: NSSize(width: contentWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: titleLabel.font!]
+        ).height
+        let detailHeight = (detailLabel.stringValue as NSString).boundingRect(
+            with: NSSize(width: contentWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: detailLabel.font!]
+        ).height
+        panel.setContentSize(NSSize(width: 260, height: max(34, titleHeight + detailHeight + 12)))
 
         if let anchor {
             let screen = NSScreen.screens.first(where: { $0.frame.intersects(anchor) }) ?? NSScreen.main
@@ -113,8 +129,8 @@ final class InputController: IMKInputController {
 
     /// Receive unpacked key events from InputMethodKit and commit them directly.
     func inputText(_ string: String!, key keyCode: Int, modifiers flags: UInt, client sender: Any!) -> Bool {
-        guard let string, let client = sender as? IMKTextInput else { return false }
-        NSLog("IntelliText: unpacked key event (keyCode=%d, length=%d)", keyCode, string.utf16.count)
+        guard let client = sender as? IMKTextInput else { return false }
+        NSLog("IntelliText: unpacked key event (keyCode=%d, length=%d)", keyCode, string?.utf16.count ?? 0)
         let modifiers = NSEvent.ModifierFlags(rawValue: flags)
         if modifiers.contains(.command) || modifiers.contains(.control) {
             return false
@@ -145,7 +161,7 @@ final class InputController: IMKInputController {
             return true
         }
 
-        guard !string.isEmpty else { return false }
+        guard let string, !string.isEmpty else { return false }
         client.insertText(string, replacementRange: NSRange(location: NSNotFound, length: 0))
         updateFallback(with: string, client: client)
         scheduleAutomaticCheck(for: client)
