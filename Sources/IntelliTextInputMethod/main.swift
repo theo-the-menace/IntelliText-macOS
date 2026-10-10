@@ -60,9 +60,9 @@ final class TeacherHintPanel {
         ])
     }
 
-    func show(original: String, replacement: String, note: String, anchor: NSRect? = nil) {
+    func show(original: String, replacement: String, note: String, anchor: NSRect? = nil, adviceOnly: Bool = false) {
         dismissWorkItem?.cancel()
-        titleLabel.stringValue = "Corrected: \(replacement)"
+        titleLabel.stringValue = adviceOnly ? "Try: \(replacement)" : "Corrected: \(replacement)"
         let explanation = note.trimmingCharacters(in: .whitespacesAndNewlines)
         detailLabel.stringValue = explanation.isEmpty
             ? "Original: \(original)"
@@ -257,15 +257,10 @@ final class InputController: IMKInputController {
         guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &current) == .success,
               let current = current as? String,
               current == expectedText,
-              let range = Range(transaction.range, in: current) else { return }
-        let replacement = current.replacingCharacters(in: range, with: transaction.replacement)
-        guard AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, replacement as CFTypeRef) == .success else {
-            NSLog("IntelliText: Accessibility fallback could not write correction")
-            return
-        }
-        accessibilityText = replacement
-        NSLog("IntelliText: applied correction through Accessibility fallback")
-        TeacherHintPanel.shared.show(original: transaction.original, replacement: transaction.replacement, note: note, anchor: focusedTextFrame())
+              let range = Range(transaction.range, in: current),
+              String(current[range]) == transaction.original else { return }
+        accessibilityText = current
+        TeacherHintPanel.shared.show(original: transaction.original, replacement: transaction.replacement, note: note, anchor: focusedTextFrame(), adviceOnly: true)
     }
 
     /// Debounced automatic correction. The input method receives committed text here,
@@ -340,6 +335,19 @@ final class InputController: IMKInputController {
             }
             let (_, transaction) = result
             await MainActor.run {
+                if automatic {
+                    let matchesClient = client.attributedSubstring(from: transaction.range)?.string == transaction.original
+                    let matchesFallback = self.fallbackSubstring(at: transaction.range) == transaction.original
+                    guard matchesClient || matchesFallback else { return }
+                    TeacherHintPanel.shared.show(
+                        original: transaction.original,
+                        replacement: transaction.replacement,
+                        note: result.0.shortNote,
+                        anchor: self.focusedTextFrame(),
+                        adviceOnly: true
+                    )
+                    return
+                }
                 if transaction.range.location != NSNotFound,
                    let current = client.attributedSubstring(from: transaction.range),
                    current.string == transaction.original {
@@ -353,14 +361,6 @@ final class InputController: IMKInputController {
                 }
                 NSLog("IntelliText: applied automatic correction")
                 self.lastTransaction = transaction
-                if automatic {
-                    TeacherHintPanel.shared.show(
-                        original: transaction.original,
-                        replacement: transaction.replacement,
-                        note: result.0.shortNote,
-                        anchor: self.focusedTextFrame()
-                    )
-                }
             }
         }
     }
@@ -545,11 +545,15 @@ final class ServerDelegate: NSObject, NSApplicationDelegate {
                 var current: CFTypeRef?
                 guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &current) == .success,
                       let current = current as? String, current == expectedValue,
-                      let stringRange = Range(result.1.range, in: current) else { return }
-                let replacement = current.replacingCharacters(in: stringRange, with: result.1.replacement)
-                guard AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, replacement as CFTypeRef) == .success else { return }
-                self.lastValue = replacement
-                TeacherHintPanel.shared.show(original: result.1.original, replacement: result.1.replacement, note: result.0.shortNote, anchor: self.focusedFrame())
+                      let sentenceRange = Range(result.1.range, in: current),
+                      String(current[sentenceRange]) == result.1.original else { return }
+                TeacherHintPanel.shared.show(
+                    original: result.1.original,
+                    replacement: result.1.replacement,
+                    note: result.0.shortNote,
+                    anchor: self.focusedFrame(),
+                    adviceOnly: true
+                )
             }
         }
     }
