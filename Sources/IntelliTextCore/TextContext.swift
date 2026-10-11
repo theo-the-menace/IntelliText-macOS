@@ -14,7 +14,7 @@ public struct TextContext: Equatable, Sendable {
         return (text as NSString).substring(with: range)
     }
 
-    /// Document-relative UTF-16 range, suitable for IMKTextInput replacementRange.
+    /// UTF-16 range of the sentence within the current text snapshot.
     public var currentSentenceRange: NSRange {
         let nsText = text as NSString
         let cursor = max(0, min(selectedRange.location, nsText.length))
