@@ -5,10 +5,12 @@ let package = Package(
     name: "IntelliTextMacOS",
     platforms: [.macOS(.v13)],
     products: [
-        .library(name: "IntelliTextCore", targets: ["IntelliTextCore"])
+        .library(name: "IntelliTextCore", targets: ["IntelliTextCore"]),
+        .executable(name: "IntelliTextApp", targets: ["IntelliTextApp"])
     ],
     targets: [
         .target(name: "IntelliTextCore"),
+        .executableTarget(name: "IntelliTextApp", dependencies: ["IntelliTextCore"]),
         .testTarget(name: "IntelliTextCoreTests", dependencies: ["IntelliTextCore"])
     ]
 )
