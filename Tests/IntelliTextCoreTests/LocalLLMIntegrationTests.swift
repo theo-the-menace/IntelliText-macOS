@@ -6,10 +6,11 @@ final class LocalLLMIntegrationTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["INTELLITEXT_LLM_INTEGRATION"] == "1" else {
             throw XCTSkip("Set INTELLITEXT_LLM_INTEGRATION=1 to exercise the installed local model server.")
         }
-        let response = try await LocalLLMInferenceProvider().correct(
-            CorrectionRequest(sentence: "She go to the office yesterday.", style: .professional)
-        )
-        XCTAssertEqual(response.replacement, "She went to the office yesterday.")
-        XCTAssertGreaterThanOrEqual(response.confidence, 0.9)
+        let provider = LocalLLMInferenceProvider()
+        for sentence in ["we go to school yesterday.", "we go to schoole yesterday."] {
+            let response = try await provider.correct(CorrectionRequest(sentence: sentence, style: .professional))
+            XCTAssertEqual(response.replacement, "We went to school yesterday.")
+            XCTAssertGreaterThanOrEqual(response.confidence, 0.9)
+        }
     }
 }

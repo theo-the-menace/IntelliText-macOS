@@ -145,10 +145,20 @@ public struct HybridInferenceProvider: InferenceProvider {
 
     public func correct(_ request: CorrectionRequest) async throws -> CorrectionResponse {
         let deterministic = try await rules.correct(request)
-        if deterministic.replacement != request.sentence {
+        let modelRequest = CorrectionRequest(sentence: deterministic.replacement, style: request.style, assist: request.assist)
+        do {
+            let modelResponse = try await languageModel.correct(modelRequest)
+            return CorrectionResponse(
+                original: request.sentence,
+                replacement: modelResponse.replacement,
+                confidence: modelResponse.confidence,
+                shortNote: modelResponse.shortNote
+            )
+        } catch {
+            // Keep deterministic spelling/formatting fixes available offline.
+            guard deterministic.replacement != request.sentence else { throw error }
             return deterministic
         }
-        return try await languageModel.correct(request)
     }
 }
 

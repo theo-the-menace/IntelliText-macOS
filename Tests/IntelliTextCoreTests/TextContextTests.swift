@@ -25,4 +25,19 @@ final class TextContextTests: XCTestCase {
         XCTAssertEqual(result?.1.range, NSRange(location: 0, length: 18))
         XCTAssertEqual(result?.0.replacement, "do not receive this")
     }
+
+    func testHybridModelCorrectsTenseEvenWhenRuleProviderCapitalizes() async throws {
+        let provider = HybridInferenceProvider(languageModel: FixedInferenceProvider(replacement: "We went to school yesterday."))
+        let result = try await provider.correct(CorrectionRequest(sentence: "we go to school yesterday."))
+        XCTAssertEqual(result.original, "we go to school yesterday.")
+        XCTAssertEqual(result.replacement, "We went to school yesterday.")
+    }
+}
+
+private struct FixedInferenceProvider: InferenceProvider {
+    let replacement: String
+
+    func correct(_ request: CorrectionRequest) async throws -> CorrectionResponse {
+        CorrectionResponse(original: request.sentence, replacement: replacement, confidence: 0.99, shortNote: "Past tense")
+    }
 }
