@@ -15,4 +15,6 @@ swift test
 ./Scripts/build-and-run.sh
 ```
 
+To start IntelliText, open Terminal, change to this project folder, then run `./Scripts/build-and-run.sh`. The script builds the app and opens it. If it is already running, quit it first with `⌘Q` so the newly built version is launched. Drag any window edge or corner to resize; use the green window button or `Control-⌘-F` to enter or leave full screen.
+
 The app provides a floating English writing box, style selection (Professional, Daily conversation, Business email, Academic), short advice-only hints, and an explicit action to apply a suggestion. It checks after a brief pause or with Check / `⌘⇧R`; it never rewrites text automatically. This first slice edits text in its own box; sending the finished text into other apps and a configurable global shortcut are follow-up work.

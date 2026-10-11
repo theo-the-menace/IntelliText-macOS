@@ -15,8 +15,8 @@ final class IntelliTextAppDelegate: NSObject, NSApplicationDelegate {
         let state = WritingAssistantModel()
         let hosting = NSHostingView(rootView: FloatingInputView(model: state))
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 340),
-            styleMask: [.titled, .closable, .miniaturizable, .utilityWindow],
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 480),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -25,7 +25,7 @@ final class IntelliTextAppDelegate: NSObject, NSApplicationDelegate {
         panel.isFloatingPanel = true
         panel.level = .floating
         panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenPrimary]
         panel.minSize = NSSize(width: 360, height: 280)
         panel.center()
         panel.makeKeyAndOrderFront(nil)
