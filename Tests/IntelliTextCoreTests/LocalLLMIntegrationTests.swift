@@ -6,11 +6,13 @@ final class LocalLLMIntegrationTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["INTELLITEXT_LLM_INTEGRATION"] == "1" else {
             throw XCTSkip("Set INTELLITEXT_LLM_INTEGRATION=1 to exercise the installed local model server.")
         }
+        let sentence = "This project aims to help those who doesn't have only a few experience at crypto and continue losing money and desiring build own skills systemly."
         let provider = LocalLLMInferenceProvider()
-        for sentence in ["we go to school yesterday.", "we go to schoole yesterday."] {
-            let response = try await provider.correct(CorrectionRequest(sentence: sentence, style: .professional))
-            XCTAssertEqual(response.replacement, "We went to school yesterday.")
-            XCTAssertGreaterThanOrEqual(response.confidence, 0.9)
+        for style in WritingStyle.allCases {
+            let response = try await provider.correct(CorrectionRequest(sentence: sentence, style: style))
+            XCTAssertGreaterThanOrEqual(response.confidence, 0.9, "Low confidence for \(style)")
+            XCTAssertFalse(response.polishedVersion.isEmpty, "Missing polished version for \(style)")
+            XCTAssertFalse(response.shortNote.isEmpty, "Missing teaching tip for \(style)")
         }
     }
 }

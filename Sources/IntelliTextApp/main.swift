@@ -42,7 +42,7 @@ final class WritingAssistantModel: ObservableObject {
     @Published var text = "" {
         didSet { scheduleSuggestion() }
     }
-    @Published var style: WritingStyle = .professional {
+    @Published var style: WritingStyle = .casual {
         didSet { scheduleSuggestion() }
     }
     @Published var suggestion: CorrectionResponse?
@@ -57,7 +57,7 @@ final class WritingAssistantModel: ObservableObject {
         scheduleSuggestion(delay: .zero)
     }
 
-    func applySuggestion() {
+    func applySuggestion(_ textToApply: String? = nil) {
         guard let suggestion else { return }
         let nsText = text as NSString
         let context = TextContext(text: text, selectedRange: NSRange(location: nsText.length, length: 0))
@@ -66,7 +66,7 @@ final class WritingAssistantModel: ObservableObject {
             status = "Text changed. Check again to refresh the suggestion."
             return
         }
-        text = nsText.replacingCharacters(in: range, with: suggestion.replacement)
+        text = nsText.replacingCharacters(in: range, with: textToApply ?? suggestion.polishedVersion)
         self.suggestion = nil
         status = "Suggestion applied."
     }
@@ -140,7 +140,10 @@ struct FloatingInputView: View {
 
             if let suggestion = model.suggestion {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Try: \(suggestion.replacement)")
+                    Text("Native version")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(suggestion.polishedVersion)
                         .font(.system(size: 13, weight: .semibold))
                         .textSelection(.enabled)
                     Text("Why: \(suggestion.shortNote)")
@@ -148,7 +151,7 @@ struct FloatingInputView: View {
                         .foregroundStyle(.secondary)
                     HStack {
                         Spacer()
-                        Button("Apply suggestion") { model.applySuggestion() }
+                        Button("Use polished version") { model.applySuggestion(suggestion.polishedVersion) }
                             .buttonStyle(.borderedProminent)
                     }
                 }

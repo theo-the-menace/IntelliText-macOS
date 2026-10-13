@@ -12,7 +12,7 @@ public struct CorrectionRequest: Sendable {
     public let style: WritingStyle
     public let assist: Bool
 
-    public init(sentence: String, style: WritingStyle = .professional, assist: Bool = false) {
+    public init(sentence: String, style: WritingStyle = .casual, assist: Bool = false) {
         self.sentence = sentence
         self.style = style
         self.assist = assist
@@ -21,13 +21,13 @@ public struct CorrectionRequest: Sendable {
 
 public struct CorrectionResponse: Equatable, Sendable {
     public let original: String
-    public let replacement: String
+    public let polishedVersion: String
     public let confidence: Double
     public let shortNote: String
 
-    public init(original: String, replacement: String, confidence: Double, shortNote: String) {
+    public init(original: String, polishedVersion: String, confidence: Double, shortNote: String) {
         self.original = original
-        self.replacement = replacement
+        self.polishedVersion = polishedVersion
         self.confidence = confidence
         self.shortNote = shortNote
     }
@@ -54,13 +54,15 @@ public struct LocalLLMInferenceProvider: InferenceProvider {
         }
 
         let system = """
-        /no_think You are an English editing engine. Correct grammar, spelling, punctuation, and awkward phrasing in exactly one sentence. \(styleInstruction) Preserve the author's meaning and facts. Do not translate non-English words; leave them in place. Return exactly one JSON object with keys replacement, confidence (0 to 1), and short_note. No markdown or explanation.
+        /no_think You are a supportive English teacher and editor. The learner wants to express their own meaning in fluent, natural English.
+        Rewrite the sentence as a single polished_version that a fluent native speaker would naturally use in this context. Fix grammar, spelling, punctuation, collocations, and awkward phrasing. Do not merely make surface corrections: improve unnatural wording. Preserve the likely intended meaning; never invent facts or claims.
+        \(styleInstruction) In short_note, teach the learner in simple English: explain why the original phrasing was unnatural, give the native-speaker pattern or phrase they can reuse, explain one important word choice, and say why the grammar or structure fits this context. Keep it concise (2 to 4 sentences). Return exactly one JSON object with keys polished_version, confidence (0 to 1), and short_note. No markdown or other text.
         """
         let payload = ChatCompletionPayload(
             model: "Qwen3-8B-Q4_K_M",
             messages: [.init(role: "system", content: system), .init(role: "user", content: request.sentence)],
             temperature: 0.15,
-            max_tokens: 128,
+            max_tokens: 256,
             response_format: .init(type: "json_object")
         )
         var urlRequest = URLRequest(url: endpoint)
@@ -80,7 +82,7 @@ public struct LocalLLMInferenceProvider: InferenceProvider {
         }
         return CorrectionResponse(
             original: request.sentence,
-            replacement: result.replacement.trimmingCharacters(in: .whitespacesAndNewlines),
+            polishedVersion: result.polishedVersion.trimmingCharacters(in: .whitespacesAndNewlines),
             confidence: min(1, max(0, result.confidence)),
             shortNote: result.shortNote
         )
@@ -103,10 +105,13 @@ private struct ChatCompletionResponse: Decodable {
 }
 
 private struct ModelCorrection: Decodable {
-    let replacement: String
+    let polishedVersion: String
     let confidence: Double
     let shortNote: String
-    enum CodingKeys: String, CodingKey { case replacement, confidence; case shortNote = "short_note" }
+    enum CodingKeys: String, CodingKey {
+        case polishedVersion = "polished_version", confidence
+        case shortNote = "short_note"
+    }
 }
 
 public enum InferenceError: Error {
@@ -131,7 +136,7 @@ public struct RuleInferenceProvider: InferenceProvider {
             result = result.replacingOccurrences(of: "can't", with: "cannot", options: .caseInsensitive)
             result = result.replacingOccurrences(of: "don't", with: "do not", options: .caseInsensitive)
         }
-        return CorrectionResponse(original: request.sentence, replacement: result, confidence: result == request.sentence ? 0.0 : 0.995, shortNote: notes.isEmpty ? "No rule-based change" : notes.joined(separator: ", "))
+        return CorrectionResponse(original: request.sentence, polishedVersion: result, confidence: result == request.sentence ? 0.0 : 0.995, shortNote: notes.isEmpty ? "No rule-based change" : notes.joined(separator: ", "))
     }
 }
 
@@ -145,18 +150,18 @@ public struct HybridInferenceProvider: InferenceProvider {
 
     public func correct(_ request: CorrectionRequest) async throws -> CorrectionResponse {
         let deterministic = try await rules.correct(request)
-        let modelRequest = CorrectionRequest(sentence: deterministic.replacement, style: request.style, assist: request.assist)
+        let modelRequest = CorrectionRequest(sentence: deterministic.polishedVersion, style: request.style, assist: request.assist)
         do {
             let modelResponse = try await languageModel.correct(modelRequest)
             return CorrectionResponse(
                 original: request.sentence,
-                replacement: modelResponse.replacement,
+                polishedVersion: modelResponse.polishedVersion,
                 confidence: modelResponse.confidence,
                 shortNote: modelResponse.shortNote
             )
         } catch {
             // Keep deterministic spelling/formatting fixes available offline.
-            guard deterministic.replacement != request.sentence else { throw error }
+            guard deterministic.polishedVersion != request.sentence else { throw error }
             return deterministic
         }
     }
